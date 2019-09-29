@@ -187,21 +187,35 @@ def add_fg_element(im_data):
     trace_timestamps.append([])
     trace_idxs.append(0)
     fg_element_labels.append('element%d' % len(fg_elements))
+    fg_colors.append(np.random.random(3))
 
     global active_fg_element
     active_fg_element = len(fg_elements) - 1
+
+def gaussian_spray(width, height, sigma_x, sigma_y):
+    # 2D Gaussian formula:
+    # https://en.wikipedia.org/wiki/Gaussian_function#Two-dimensional_Gaussian_function
+    x = np.arange(-width // 2, -width // 2 + width)
+    y = np.arange(-height // 2, -height // 2 + height)
+    xx, yy = np.meshgrid(x, y)
+    term0 = np.square(xx) / np.square(sigma_x)
+    term1 = np.square(yy) / np.square(sigma_y)
+    probs = np.exp(-0.5 * (term0 + term1))
+    rand = np.random.random(probs.shape)
+    return rand < probs
 
 def export_gif():
     global exporting
     if not exporting:
         exporting = True
         out_path = 'output.gif'
+        im_data = np.copy(bg_im_data)
         with imageio.get_writer(out_path, mode='I', fps=50) as writer:
             n_frames = max([len(t) for t in traces])
             for k in range(n_frames):
                 print('[+] exporting frame %d of %d' % (k + 1, n_frames))
-                im_height, im_width, im_channels = bg_im_data.shape
-                out_data = np.copy(bg_im_data)
+                im_height, im_width, im_channels = im_data.shape
+                out_data = np.copy(im_data)
                 for i in range(len(fg_elements)):
                     trace = traces[i]
                     if len(trace) > 0:
@@ -214,10 +228,19 @@ def export_gif():
                         x1 = min(x0 + fg_w, im_width)
                         if y1 - y0 > 0 and x1 - x0 > 0:
                             fg_alpha = fg_im_data[:y1-y0, :x1-x0, 3:]
-                            out_data[y0:y1, x0:x1, :] *= 1.0 - fg_alpha
-                            out_data[y0:y1, x0:x1, :] += fg_alpha * fg_im_data[:y1-y0, :x1-x0, :3]
+                            out_data[y0:y1, x0:x1] *= 1.0 - fg_alpha
+                            out_data[y0:y1, x0:x1] += fg_alpha * fg_im_data[:y1-y0, :x1-x0, :3]
+                            if spray_trail:
+                                split = 4
+                                sy0 = y0  + (y1 - y0) // (split * 2)
+                                sy1 = sy0 + (y1 - y0) // (split)
+                                sx0 = x0  + (x1 - x0) // (split * 2)
+                                sx1 = sx0 + (x1 - x0) // (split)
+                                spray_h, spray_w = out_data[sy0:sy1, sx0:sx1].shape[:2]
+                                spray = gaussian_spray(spray_w, spray_h, float(spray_w) / 2, float(spray_h) / 2)
+                                im_data[sy0:sy1, sx0:sx1, :3][spray] = fg_colors[i]  # splatter trail
                 out_data = (out_data * 255).astype(np.uint8)
-                writer.append_data(out_data)
+                writer.append_data(out_data[::-1])  # flip y-axis
         print('[+] exported to %s' % out_path)
         exporting = False
 
@@ -230,11 +253,13 @@ trace_idxs = []  # list of current indices, one for each trace
 trace_active = False
 trace_start_time = 0
 fg_element_labels = []
+fg_colors = []
 active_fg_element = None
 bg_im_data = None
 fg_elements = []
 exporting = False
 timestep = 0
+spray_trail = True
 
 if __name__ == '__main__':
     imgui.create_context()
