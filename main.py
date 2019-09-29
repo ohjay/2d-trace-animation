@@ -7,6 +7,7 @@ from PIL import Image
 import numpy as np
 import time
 import imageio
+import cv2
 
 def impl_glfw_init():
     window_name = 'A Simple Animation Program'
@@ -41,6 +42,7 @@ def on_key(window, key, scancode, action, mods):
         # Reset the trace buffer, so that another can be recorded
         del traces[active_fg_element][:]  
         del trace_timestamps[active_fg_element][:]
+        trace_idxs[active_fg_element] = 0
     elif key == glfw.KEY_S and action == glfw.RELEASE:
         # Switch the active fg element
         active_fg_element = (active_fg_element + 1) % len(fg_elements)
@@ -109,8 +111,14 @@ def update_texture(im_data):
         for i in range(len(fg_elements)):
             trace = traces[i]
             if len(trace) > 0:
-                trace_idxs[i] = (trace_idxs[i] + 1) % len(trace)
                 x, y = trace[trace_idxs[i]]
+                if ricochet:
+                    preview = trace_idxs[i] + idx_vels[i]
+                    if preview < 0 or preview >= len(trace):
+                        idx_vels[i] *= -1
+                    trace_idxs[i] += idx_vels[i]
+                else:
+                    trace_idxs[i] = (trace_idxs[i] + 1) % len(trace)
 
                 fg_im_data = fg_elements[i]
                 fg_h, fg_w, fg_c = fg_im_data.shape
@@ -122,6 +130,17 @@ def update_texture(im_data):
                     fg_alpha = fg_im_data[:y1-y0, :x1-x0, 3:]
                     out_data[y0:y1, x0:x1, :] *= 1.0 - fg_alpha
                     out_data[y0:y1, x0:x1, :] += fg_alpha * fg_im_data[:y1-y0, :x1-x0, :3]
+
+                    # trail preview
+                    if spray_trail:
+                        split = 4
+                        sy0 = y0  + (y1 - y0) // (split * 2)
+                        sy1 = sy0 + (y1 - y0) // (split)
+                        sx0 = x0  + (x1 - x0) // (split * 2)
+                        sx1 = sx0 + (x1 - x0) // (split)
+                        spray_h, spray_w = out_data[sy0:sy1, sx0:sx1].shape[:2]
+                        spray = gaussian_spray(spray_w, spray_h, float(spray_w) / 4, float(spray_h) / 4)
+                        im_data[sy0:sy1, sx0:sx1, :3][spray] = fg_colors[i]  # spray trail
 
     glBindTexture(GL_TEXTURE_2D, texture)
     glTexImage2D(GL_TEXTURE_2D, 0, tex_format, im_width, im_height, 0, tex_format, GL_FLOAT, out_data)
@@ -172,7 +191,7 @@ def prepare_shader():
     glVertexAttribPointer(positionAttrib, 2, GL_FLOAT, GL_FALSE, 16, None)
     glVertexAttribPointer(coordsAttrib,   2, GL_FLOAT, GL_TRUE,  16, ctypes.c_void_p(8))
 
-    bg_im_data = load_image('images/bokeh.jpg')
+    bg_im_data = load_image('images/starry.jpg')
     texture = load_texture(bg_im_data)
     texture_locn = glGetUniformLocation(shader, 'tex')
 
@@ -181,13 +200,17 @@ def prepare_shader():
 
     return shader, VAO, texture, texture_locn
 
-def add_fg_element(im_data):
+def add_fg_element(im_data, label=None):
     fg_elements.append(im_data)
     traces.append([])
     trace_timestamps.append([])
     trace_idxs.append(0)
-    fg_element_labels.append('element%d' % len(fg_elements))
+    if label is None:
+        label = 'element%d' % len(fg_elements)
+    fg_element_labels.append(label)
     fg_colors.append(np.random.random(3))
+    if ricochet:
+        idx_vels.append(1)
 
     global active_fg_element
     active_fg_element = len(fg_elements) - 1
@@ -209,7 +232,7 @@ def export_gif():
     if not exporting:
         exporting = True
         out_path = 'output.gif'
-        im_data = np.copy(bg_im_data)
+        im_data = np.copy(original_bg_im_data)
         with imageio.get_writer(out_path, mode='I', fps=50) as writer:
             n_frames = max([len(t) for t in traces])
             for k in range(n_frames):
@@ -219,7 +242,14 @@ def export_gif():
                 for i in range(len(fg_elements)):
                     trace = traces[i]
                     if len(trace) > 0:
-                        x, y = trace[k % len(trace)]
+                        if ricochet:
+                            if (k // (len(trace) - 1)) % 2 == 0:
+                                trace_idx = k % (len(trace) - 1)  # going forward
+                            else:
+                                trace_idx = -(k % (len(trace) - 1)) - 1  # going backward
+                        else:
+                            trace_idx = k % len(trace)
+                        x, y = trace[trace_idx]
                         fg_im_data = fg_elements[i]
                         fg_h, fg_w, fg_c = fg_im_data.shape
                         y0 = max(height - y - fg_h // 2, 0)
@@ -237,10 +267,62 @@ def export_gif():
                                 sx0 = x0  + (x1 - x0) // (split * 2)
                                 sx1 = sx0 + (x1 - x0) // (split)
                                 spray_h, spray_w = out_data[sy0:sy1, sx0:sx1].shape[:2]
-                                spray = gaussian_spray(spray_w, spray_h, float(spray_w) / 2, float(spray_h) / 2)
-                                im_data[sy0:sy1, sx0:sx1, :3][spray] = fg_colors[i]  # splatter trail
+                                spray = gaussian_spray(spray_w, spray_h, float(spray_w) / 4, float(spray_h) / 4)
+                                im_data[sy0:sy1, sx0:sx1, :3][spray] = fg_colors[i]  # spray trail
                 out_data = (out_data * 255).astype(np.uint8)
                 writer.append_data(out_data[::-1])  # flip y-axis
+        print('[+] exported to %s' % out_path)
+        exporting = False
+
+def export_mov():
+    global exporting
+    if not exporting:
+        exporting = True
+        out_path = 'output.mov'
+        im_data = np.copy(original_bg_im_data)
+        fps = 50
+        fourcc = cv2.VideoWriter_fourcc('m', 'p', '4', 'v')
+        writer = cv2.VideoWriter()
+        size = tuple(im_data.shape[:2][::-1])
+        success = writer.open(out_path, fourcc, fps, size, True)
+        n_frames = max([len(t) for t in traces])
+        for k in range(n_frames):
+            print('[+] exporting frame %d of %d' % (k + 1, n_frames))
+            im_height, im_width, im_channels = im_data.shape
+            out_data = np.copy(im_data)
+            for i in range(len(fg_elements)):
+                trace = traces[i]
+                if len(trace) > 0:
+                    if ricochet:
+                        if (k // (len(trace) - 1)) % 2 == 0:
+                            trace_idx = k % (len(trace) - 1)  # going forward
+                        else:
+                            trace_idx = -(k % (len(trace) - 1)) - 1  # going backward
+                    else:
+                        trace_idx = k % len(trace)
+                    x, y = trace[trace_idx]
+                    fg_im_data = fg_elements[i]
+                    fg_h, fg_w, fg_c = fg_im_data.shape
+                    y0 = max(height - y - fg_h // 2, 0)
+                    y1 = min(y0 + fg_h, im_height)
+                    x0 = max(x - fg_w // 2, 0)
+                    x1 = min(x0 + fg_w, im_width)
+                    if y1 - y0 > 0 and x1 - x0 > 0:
+                        fg_alpha = fg_im_data[:y1-y0, :x1-x0, 3:]
+                        out_data[y0:y1, x0:x1] *= 1.0 - fg_alpha
+                        out_data[y0:y1, x0:x1] += fg_alpha * fg_im_data[:y1-y0, :x1-x0, :3]
+                        if spray_trail:
+                            split = 4
+                            sy0 = y0  + (y1 - y0) // (split * 2)
+                            sy1 = sy0 + (y1 - y0) // (split)
+                            sx0 = x0  + (x1 - x0) // (split * 2)
+                            sx1 = sx0 + (x1 - x0) // (split)
+                            spray_h, spray_w = out_data[sy0:sy1, sx0:sx1].shape[:2]
+                            spray = gaussian_spray(spray_w, spray_h, float(spray_w) / 4, float(spray_h) / 4)
+                            im_data[sy0:sy1, sx0:sx1, :3][spray] = fg_colors[i]  # spray trail
+            out_data = (out_data * 255).astype(np.uint8)
+            writer.write(out_data[::-1, :, ::-1])  # flip y-axis, RGB -> BGR
+        writer.release()
         print('[+] exported to %s' % out_path)
         exporting = False
 
@@ -250,6 +332,7 @@ width, height = 1280, 720
 traces = []  # list of trace lists
 trace_timestamps = []  # list of timestamp lists
 trace_idxs = []  # list of current indices, one for each trace
+idx_vels = []  # list of velocities for each trace index
 trace_active = False
 trace_start_time = 0
 fg_element_labels = []
@@ -260,6 +343,7 @@ fg_elements = []
 exporting = False
 timestep = 0
 spray_trail = True
+ricochet = True
 
 if __name__ == '__main__':
     imgui.create_context()
@@ -273,8 +357,9 @@ if __name__ == '__main__':
 
     imgui.set_window_focus()
 
-    add_fg_element(load_image('images/heli.png'))
-    add_fg_element(load_image('images/heli.png'))
+    for j in range(19):
+        add_fg_element(load_image('images/heli%d.png' % j), label='heli%d' % j)
+    original_bg_im_data = np.copy(bg_im_data)
     active_fg_element = 0
 
     while not glfw.window_should_close(window):
@@ -312,6 +397,8 @@ if __name__ == '__main__':
                 '', active_fg_element, fg_element_labels)
             if imgui.button('Export GIF'):
                 export_gif()
+            if imgui.button('Export MOV'):
+                export_mov()
             imgui.end()
 
         glClearColor(1.0, 1.0, 1.0, 1.0)
