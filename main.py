@@ -400,6 +400,8 @@ if __name__ == '__main__':
                 export_gif()
             if imgui.button('Export MOV'):
                 export_mov()
+            clicked, spray_trail = imgui.checkbox('spray_trail', spray_trail)
+            clicked, ricochet    = imgui.checkbox('ricochet',    ricochet)
             imgui.end()
 
         glClearColor(1.0, 1.0, 1.0, 1.0)
