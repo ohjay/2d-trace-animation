@@ -42,7 +42,6 @@ def on_key(window, key, scancode, action, mods):
         # Reset the trace buffer, so that another can be recorded
         del traces[active_fg_element][:]  
         del trace_timestamps[active_fg_element][:]
-        trace_idxs[active_fg_element] = 0
     elif key == glfw.KEY_S and action == glfw.RELEASE:
         # Switch the active fg element
         active_fg_element = (active_fg_element + 1) % len(fg_elements)
@@ -103,6 +102,7 @@ def load_texture(im_data):
     return texture
 
 def update_texture(im_data):
+    global timestep
     im_height, im_width, im_channels = im_data.shape
     tex_format = get_tex_format(im_channels)
     
@@ -111,14 +111,14 @@ def update_texture(im_data):
         for i in range(len(fg_elements)):
             trace = traces[i]
             if len(trace) > 0:
-                x, y = trace[trace_idxs[i]]
                 if ricochet:
-                    preview = trace_idxs[i] + idx_vels[i]
-                    if preview < 0 or preview >= len(trace):
-                        idx_vels[i] *= -1
-                    trace_idxs[i] += idx_vels[i]
+                    if (timestep // (len(trace) - 1)) % 2 == 0:
+                        trace_idx = timestep % (len(trace) - 1)  # going forward
+                    else:
+                        trace_idx = -(timestep % (len(trace) - 1)) - 1  # going backward
                 else:
-                    trace_idxs[i] = (trace_idxs[i] + 1) % len(trace)
+                    trace_idx = timestep % len(trace)
+                x, y = trace[trace_idx]
 
                 fg_im_data = fg_elements[i]
                 fg_h, fg_w, fg_c = fg_im_data.shape
@@ -141,6 +141,9 @@ def update_texture(im_data):
                         spray_h, spray_w = out_data[sy0:sy1, sx0:sx1].shape[:2]
                         spray = gaussian_spray(spray_w, spray_h, float(spray_w) / 4, float(spray_h) / 4)
                         im_data[sy0:sy1, sx0:sx1, :3][spray] = fg_colors[i]  # spray trail
+        n_frames = max([len(t) for t in traces])
+        if n_frames > 0:
+            timestep = (timestep + 1) % n_frames
 
     glBindTexture(GL_TEXTURE_2D, texture)
     glTexImage2D(GL_TEXTURE_2D, 0, tex_format, im_width, im_height, 0, tex_format, GL_FLOAT, out_data)
@@ -204,13 +207,10 @@ def add_fg_element(im_data, label=None):
     fg_elements.append(im_data)
     traces.append([])
     trace_timestamps.append([])
-    trace_idxs.append(0)
     if label is None:
         label = 'element%d' % len(fg_elements)
     fg_element_labels.append(label)
     fg_colors.append(np.random.random(3))
-    if ricochet:
-        idx_vels.append(1)
 
     global active_fg_element
     active_fg_element = len(fg_elements) - 1
@@ -331,8 +331,6 @@ mouse_pressed = False
 width, height = 1280, 720
 traces = []  # list of trace lists
 trace_timestamps = []  # list of timestamp lists
-trace_idxs = []  # list of current indices, one for each trace
-idx_vels = []  # list of velocities for each trace index
 trace_active = False
 trace_start_time = 0
 fg_element_labels = []
@@ -378,8 +376,9 @@ if __name__ == '__main__':
             imgui.set_next_window_size(width, timeline_height)
             imgui.set_next_window_bg_alpha(0.8)
             imgui.begin('timeline', False, imgui.WINDOW_NO_TITLE_BAR | imgui.WINDOW_NO_RESIZE)
+            n_frames = max([len(t) for t in traces])
             changed, timestep = imgui.slider_int(
-                'timestep', timestep, min_value=0, max_value=100, format='%d')
+                'timestep', timestep, min_value=0, max_value=n_frames, format='%d')
             if imgui.button('Play Back Animation'):
                 print('[TODO: play back the animation]')
             imgui.end()
