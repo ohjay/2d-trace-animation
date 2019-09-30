@@ -342,6 +342,7 @@ exporting = False
 timestep = 0
 spray_trail = True
 ricochet = True
+play_animation = True
 
 if __name__ == '__main__':
     imgui.create_context()
@@ -369,6 +370,7 @@ if __name__ == '__main__':
         if curr_width != width or curr_height != height:
             width, height = curr_width, curr_height
         
+        timestep_changed = False
         if not hide_panel:
             # Timeline
             timeline_height = 80
@@ -377,10 +379,10 @@ if __name__ == '__main__':
             imgui.set_next_window_bg_alpha(0.8)
             imgui.begin('timeline', False, imgui.WINDOW_NO_TITLE_BAR | imgui.WINDOW_NO_RESIZE)
             n_frames = max([len(t) for t in traces])
-            changed, timestep = imgui.slider_int(
+            timestep_changed, timestep = imgui.slider_int(
                 'timestep', timestep, min_value=0, max_value=n_frames, format='%d')
-            if imgui.button('Play Back Animation'):
-                print('[TODO: play back the animation]')
+            if imgui.button('Pause Animation' if play_animation else 'Play Animation'):
+                play_animation = not play_animation
             imgui.end()
 
             # Control panel
@@ -406,7 +408,7 @@ if __name__ == '__main__':
         glUseProgram(shader)
         try:
             glActiveTexture(GL_TEXTURE0)
-            if not trace_active:
+            if (play_animation or timestep_changed) and not trace_active:
                 update_texture(bg_im_data)
             glBindTexture(GL_TEXTURE_2D, texture)
             glUniform1i(texture_locn, 0)
