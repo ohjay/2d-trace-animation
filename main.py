@@ -86,6 +86,43 @@ def get_tex_format(n_channels):
     else:
         return None
 
+def get_frame(im_data, frame_idx):
+    im_height, im_width, im_channels = im_data.shape
+    out_data = np.copy(im_data)
+    for i in range(len(fg_elements)):
+        trace = traces[i]
+        if len(trace) > 0:
+            if ricochet:
+                if (frame_idx // (len(trace) - 1)) % 2 == 0:
+                    trace_idx = frame_idx % (len(trace) - 1)  # going forward
+                else:
+                    trace_idx = -(frame_idx % (len(trace) - 1)) - 1  # going backward
+            else:
+                trace_idx = frame_idx % len(trace)
+            x, y = trace[trace_idx]
+
+            fg_im_data = fg_elements[i]
+            fg_h, fg_w, fg_c = fg_im_data.shape
+            y0 = max(height - y - fg_h // 2, 0)
+            y1 = min(y0 + fg_h, im_height)
+            x0 = max(x - fg_w // 2, 0)
+            x1 = min(x0 + fg_w, im_width)
+            if y1 - y0 > 0 and x1 - x0 > 0:
+                fg_alpha = fg_im_data[:y1-y0, :x1-x0, 3:]
+                out_data[y0:y1, x0:x1] *= 1.0 - fg_alpha
+                out_data[y0:y1, x0:x1] += fg_alpha * fg_im_data[:y1-y0, :x1-x0, :3]
+
+                if spray_trail:
+                    split = 4
+                    sy0 = y0  + (y1 - y0) // (split * 2)
+                    sy1 = sy0 + (y1 - y0) // (split)
+                    sx0 = x0  + (x1 - x0) // (split * 2)
+                    sx1 = sx0 + (x1 - x0) // (split)
+                    spray_h, spray_w = out_data[sy0:sy1, sx0:sx1].shape[:2]
+                    spray = gaussian_spray(spray_w, spray_h, float(spray_w) / 4, float(spray_h) / 4)
+                    im_data[sy0:sy1, sx0:sx1, :3][spray] = fg_colors[i]  # spray trail
+    return out_data
+
 def load_texture(im_data):
     im_height, im_width, im_channels = im_data.shape
     tex_format = get_tex_format(im_channels)
@@ -103,50 +140,15 @@ def load_texture(im_data):
 
 def update_texture(im_data):
     global timestep
-    im_height, im_width, im_channels = im_data.shape
-    tex_format = get_tex_format(im_channels)
-    
-    out_data = np.copy(im_data)
     if not trace_active:
-        for i in range(len(fg_elements)):
-            trace = traces[i]
-            if len(trace) > 0:
-                if ricochet:
-                    if (timestep // (len(trace) - 1)) % 2 == 0:
-                        trace_idx = timestep % (len(trace) - 1)  # going forward
-                    else:
-                        trace_idx = -(timestep % (len(trace) - 1)) - 1  # going backward
-                else:
-                    trace_idx = timestep % len(trace)
-                x, y = trace[trace_idx]
-
-                fg_im_data = fg_elements[i]
-                fg_h, fg_w, fg_c = fg_im_data.shape
-                y0 = max(height - y - fg_h // 2, 0)
-                y1 = min(y0 + fg_h, im_height)
-                x0 = max(x - fg_w // 2, 0)
-                x1 = min(x0 + fg_w, im_width)
-                if y1 - y0 > 0 and x1 - x0 > 0:
-                    fg_alpha = fg_im_data[:y1-y0, :x1-x0, 3:]
-                    out_data[y0:y1, x0:x1, :] *= 1.0 - fg_alpha
-                    out_data[y0:y1, x0:x1, :] += fg_alpha * fg_im_data[:y1-y0, :x1-x0, :3]
-
-                    # trail preview
-                    if spray_trail:
-                        split = 4
-                        sy0 = y0  + (y1 - y0) // (split * 2)
-                        sy1 = sy0 + (y1 - y0) // (split)
-                        sx0 = x0  + (x1 - x0) // (split * 2)
-                        sx1 = sx0 + (x1 - x0) // (split)
-                        spray_h, spray_w = out_data[sy0:sy1, sx0:sx1].shape[:2]
-                        spray = gaussian_spray(spray_w, spray_h, float(spray_w) / 4, float(spray_h) / 4)
-                        im_data[sy0:sy1, sx0:sx1, :3][spray] = fg_colors[i]  # spray trail
+        out_data = get_frame(im_data, timestep)
         n_frames = max([len(t) for t in traces])
         if n_frames > 0:
             timestep = (timestep + 1) % n_frames
-
-    glBindTexture(GL_TEXTURE_2D, texture)
-    glTexImage2D(GL_TEXTURE_2D, 0, tex_format, im_width, im_height, 0, tex_format, GL_FLOAT, out_data)
+        im_height, im_width, im_channels = im_data.shape
+        tex_format = get_tex_format(im_channels)
+        glBindTexture(GL_TEXTURE_2D, texture)
+        glTexImage2D(GL_TEXTURE_2D, 0, tex_format, im_width, im_height, 0, tex_format, GL_FLOAT, out_data)
 
 def prepare_shader():
     global bg_im_data
@@ -237,38 +239,7 @@ def export_gif():
             n_frames = max([len(t) for t in traces])
             for k in range(n_frames):
                 print('[+] exporting frame %d of %d' % (k + 1, n_frames))
-                im_height, im_width, im_channels = im_data.shape
-                out_data = np.copy(im_data)
-                for i in range(len(fg_elements)):
-                    trace = traces[i]
-                    if len(trace) > 0:
-                        if ricochet:
-                            if (k // (len(trace) - 1)) % 2 == 0:
-                                trace_idx = k % (len(trace) - 1)  # going forward
-                            else:
-                                trace_idx = -(k % (len(trace) - 1)) - 1  # going backward
-                        else:
-                            trace_idx = k % len(trace)
-                        x, y = trace[trace_idx]
-                        fg_im_data = fg_elements[i]
-                        fg_h, fg_w, fg_c = fg_im_data.shape
-                        y0 = max(height - y - fg_h // 2, 0)
-                        y1 = min(y0 + fg_h, im_height)
-                        x0 = max(x - fg_w // 2, 0)
-                        x1 = min(x0 + fg_w, im_width)
-                        if y1 - y0 > 0 and x1 - x0 > 0:
-                            fg_alpha = fg_im_data[:y1-y0, :x1-x0, 3:]
-                            out_data[y0:y1, x0:x1] *= 1.0 - fg_alpha
-                            out_data[y0:y1, x0:x1] += fg_alpha * fg_im_data[:y1-y0, :x1-x0, :3]
-                            if spray_trail:
-                                split = 4
-                                sy0 = y0  + (y1 - y0) // (split * 2)
-                                sy1 = sy0 + (y1 - y0) // (split)
-                                sx0 = x0  + (x1 - x0) // (split * 2)
-                                sx1 = sx0 + (x1 - x0) // (split)
-                                spray_h, spray_w = out_data[sy0:sy1, sx0:sx1].shape[:2]
-                                spray = gaussian_spray(spray_w, spray_h, float(spray_w) / 4, float(spray_h) / 4)
-                                im_data[sy0:sy1, sx0:sx1, :3][spray] = fg_colors[i]  # spray trail
+                out_data = get_frame(im_data, k)
                 out_data = (out_data * 255).astype(np.uint8)
                 writer.append_data(out_data[::-1])  # flip y-axis
         print('[+] exported to %s' % out_path)
@@ -288,38 +259,7 @@ def export_mov():
         n_frames = max([len(t) for t in traces])
         for k in range(n_frames):
             print('[+] exporting frame %d of %d' % (k + 1, n_frames))
-            im_height, im_width, im_channels = im_data.shape
-            out_data = np.copy(im_data)
-            for i in range(len(fg_elements)):
-                trace = traces[i]
-                if len(trace) > 0:
-                    if ricochet:
-                        if (k // (len(trace) - 1)) % 2 == 0:
-                            trace_idx = k % (len(trace) - 1)  # going forward
-                        else:
-                            trace_idx = -(k % (len(trace) - 1)) - 1  # going backward
-                    else:
-                        trace_idx = k % len(trace)
-                    x, y = trace[trace_idx]
-                    fg_im_data = fg_elements[i]
-                    fg_h, fg_w, fg_c = fg_im_data.shape
-                    y0 = max(height - y - fg_h // 2, 0)
-                    y1 = min(y0 + fg_h, im_height)
-                    x0 = max(x - fg_w // 2, 0)
-                    x1 = min(x0 + fg_w, im_width)
-                    if y1 - y0 > 0 and x1 - x0 > 0:
-                        fg_alpha = fg_im_data[:y1-y0, :x1-x0, 3:]
-                        out_data[y0:y1, x0:x1] *= 1.0 - fg_alpha
-                        out_data[y0:y1, x0:x1] += fg_alpha * fg_im_data[:y1-y0, :x1-x0, :3]
-                        if spray_trail:
-                            split = 4
-                            sy0 = y0  + (y1 - y0) // (split * 2)
-                            sy1 = sy0 + (y1 - y0) // (split)
-                            sx0 = x0  + (x1 - x0) // (split * 2)
-                            sx1 = sx0 + (x1 - x0) // (split)
-                            spray_h, spray_w = out_data[sy0:sy1, sx0:sx1].shape[:2]
-                            spray = gaussian_spray(spray_w, spray_h, float(spray_w) / 4, float(spray_h) / 4)
-                            im_data[sy0:sy1, sx0:sx1, :3][spray] = fg_colors[i]  # spray trail
+            out_data = get_frame(im_data, k)
             out_data = (out_data * 255).astype(np.uint8)
             writer.write(out_data[::-1, :, ::-1])  # flip y-axis, RGB -> BGR
         writer.release()
