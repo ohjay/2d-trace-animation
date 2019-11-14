@@ -22,7 +22,7 @@ python main.py
 - handle non-RGB/RGBA images
 - "no loop" option for each foreground object
 - camera transforms, including orbit
-- full-object translation/rotation/scaling interpolation between different keypoints (tweening)
+- full-object position/rotation/scaling interpolation between different keypoints (tweening)
 - lasso select object components to animate individually
 - 3D workflow: modify transforms in each coordinate plane, mix 2D and 3D objects
 - stylization for rendering (e.g. non-photorealistic)
@@ -34,7 +34,7 @@ python main.py
 - import new images (foreground, background) in-app
 
 ## Controls
-- `s`: switch foreground object
+- `s`: switch active foreground object
 - `space`: clear trace for active foreground object
 - `tab`: hide control bar
 - `hold cursor and move`: record trace for active foreground object, if one doesn't already exist
