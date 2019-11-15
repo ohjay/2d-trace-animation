@@ -1,5 +1,7 @@
 Simple 2D animation software.
 
+![](https://i.imgur.com/npR8luu.png)
+
 ## Quickstart
 ```
 virtualenv -p python2.7 ./animation-env
