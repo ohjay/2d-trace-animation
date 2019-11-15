@@ -1,6 +1,4 @@
-Simple 2D animation software.
-
-![](https://i.imgur.com/npR8luu.png)
+![Simple 2D animation software.](https://i.imgur.com/npR8luu.png)
 
 ## Quickstart
 ```
