@@ -2,5 +2,5 @@ imgui[glfw]==1.0.0
 Pillow==6.2.1
 numpy==1.13.0
 imageio==2.2.0
-opencv-python==3.3.0.10
+opencv-python==3.4.7.28
 opencv-contrib-python==4.0.0.21
